@@ -1,5 +1,6 @@
 import math
 from decimal import Decimal
+from django.db import models
 from shapely.geometry import LineString, Point
 from routing.models import FuelStop
 from routing.services.osrm import get_route
@@ -95,7 +96,20 @@ def optimize_fuel_route(
             })
             total_fuel_cost = cost
         else:
-            total_fuel_cost = 0.0
+            # If no station is within 10 miles, use nearest station or database average
+            closest_station = None
+            if bbox_stops:
+                closest_station = min(
+                    bbox_stops,
+                    key=lambda s: line.distance(Point(to_miles_xy(s.longitude, s.latitude)))
+                )
+            if closest_station:
+                price = float(closest_station.retail_price)
+            else:
+                avg_price_dict = FuelStop.objects.aggregate(models.Avg("retail_price"))
+                price = float(avg_price_dict["retail_price__avg"]) if avg_price_dict.get("retail_price__avg") else 3.450
+
+            total_fuel_cost = round(total_gallons_consumed * price, 2)
 
         return {
             "total_distance_miles": total_distance,
