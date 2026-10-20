@@ -5,8 +5,12 @@
 # is recreated from scratch on each deploy/restart. This script therefore:
 #   1. applies migrations,
 #   2. (re)loads the committed fuel-stop CSV into the database, then
-#   3. launches Gunicorn bound to Render's $PORT.
+#   3. launches Gunicorn bound to Render's $PORT on all interfaces.
 set -o errexit  # exit on error
+
+# Render injects $PORT; default to 8000 for local runs. Bind to 0.0.0.0 (NOT
+# 127.0.0.1) so Render's port scanner can detect the open port.
+: "${PORT:=8000}"
 
 python manage.py migrate --no-input
 
@@ -15,4 +19,7 @@ python manage.py migrate --no-input
 # truth and the data is read-only at runtime.
 python manage.py load_fuel_prices --clear
 
-python -m gunicorn core.wsgi:application --bind "0.0.0.0:${PORT:-8000}"
+# `exec` replaces this shell with Gunicorn so it becomes PID 1 and receives
+# Render's stop/restart signals directly (clean shutdowns, no orphan process).
+exec python -m gunicorn core.wsgi:application --bind "0.0.0.0:${PORT}"
+
