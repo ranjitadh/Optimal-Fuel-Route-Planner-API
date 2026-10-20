@@ -35,6 +35,17 @@ elif DEBUG:
 else:
     ALLOWED_HOSTS = []
 
+# Render sets RENDER_EXTERNAL_HOSTNAME to the service's public hostname. Trust
+# it automatically when present so the deployed app never returns the blank
+# 400 Bad Request caused by a missing ALLOWED_HOSTS entry. Also trust the
+# wildcard form so any *.onrender.com URL (e.g. renamed services) is accepted.
+_render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if _render_hostname:
+    if _render_hostname not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_render_hostname)
+    if '.onrender.com' not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append('.onrender.com')
+
 # Render terminates TLS at its proxy and forwards the original scheme in this
 # header; telling Django to trust it keeps request.is_secure() and CSRF correct.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -45,6 +56,12 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # session/CSRF-protected forms; the JSON API is token-free.
 _csrf_trusted = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '')
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_trusted.split(',') if o.strip()]
+# Derive the trusted HTTPS origin from Render's hostname so CSRF checks pass
+# without manual configuration.
+if _render_hostname:
+    _render_origin = f'https://{_render_hostname}'
+    if _render_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_render_origin)
 
 # Application definition
 INSTALLED_APPS = [
