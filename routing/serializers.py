@@ -62,14 +62,28 @@ class FuelStopRefuelSerializer(serializers.Serializer):
     cost_usd = serializers.FloatField()
     note = serializers.CharField(required=False, allow_null=True)
 
+class SuggestedStopSerializer(serializers.Serializer):
+    """Optional, unbilled refueling suggestion for trips covered by the start tank."""
+    truckstop_name = serializers.CharField()
+    city = serializers.CharField()
+    state = serializers.CharField()
+    retail_price = serializers.FloatField()
+    route_mile = serializers.FloatField()
+
 class RouteResponseSerializer(serializers.Serializer):
     start_location = LocationInfoSerializer()
     finish_location = LocationInfoSerializer()
     total_distance_miles = serializers.FloatField()
     duration_hours = serializers.FloatField()
     total_fuel_gallons = serializers.FloatField()
+    total_fuel_consumed_gallons = serializers.FloatField()
     total_fuel_cost_usd = serializers.FloatField()
+    avg_price_per_gallon = serializers.FloatField(allow_null=True)
+    tank_capacity_gallons = serializers.FloatField()
+    usable_range_miles = serializers.FloatField()
+    starting_fuel_gallons = serializers.FloatField()
     fuel_stops_count = serializers.IntegerField()
     fuel_stops = FuelStopRefuelSerializer(many=True)
+    suggested_stop = SuggestedStopSerializer(allow_null=True, required=False)
     route_geometry = serializers.DictField()
     map_url = serializers.CharField()

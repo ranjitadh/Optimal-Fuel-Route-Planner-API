@@ -11,7 +11,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--file",
             type=str,
-            default="data/fuel_prices_geocoded.csv",
+            default="data/processed/fuel_prices_geocoded.csv",
             help="Path to the geocoded fuel prices CSV file",
         )
         parser.add_argument(

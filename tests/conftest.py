@@ -6,4 +6,4 @@ from routing.models import FuelStop
 def seed_test_database(db):
     """Ensures test database has fuel stops loaded from pre-geocoded CSV."""
     if FuelStop.objects.count() == 0:
-        call_command("load_fuel_prices", file="data/fuel_prices_geocoded.csv")
+        call_command("load_fuel_prices", file="data/processed/fuel_prices_geocoded.csv")

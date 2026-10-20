@@ -8,6 +8,16 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load .env file into os.environ if present
+_env_file = BASE_DIR / '.env'
+if _env_file.exists():
+    with open(_env_file, 'r', encoding='utf-8') as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _k, _v = _line.split('=', 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-*jtslb%$!s@8^&1^*v46x)n7a@hhnd86#%#6!7*4pq8^1w47@y')
 
@@ -129,3 +139,7 @@ REST_FRAMEWORK = {
 }
 
 CORS_ALLOW_ALL_ORIGINS = True
+ 
+# API Key Configuration
+API_KEY = os.environ.get('API_KEY', '')
+CARTO_API_KEY = os.environ.get('CARTO_API_KEY', API_KEY)

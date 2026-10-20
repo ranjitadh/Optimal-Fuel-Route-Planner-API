@@ -5,11 +5,11 @@ import pandas as pd
 import requests
 
 def generate_geocoded_dataset(
-    excel_path="/Users/ranjitadhikari/Desktop/fuel-prices-for-be-assessment.xlsx",
-    output_csv="data/fuel_prices_geocoded.csv",
+    source_path="data/raw/fuel-prices-for-be-assessment.csv",
+    output_csv="data/processed/fuel_prices_geocoded.csv",
 ):
-    print(f"Reading {excel_path}...")
-    df_fuel = pd.read_excel(excel_path)
+    print(f"Reading {source_path}...")
+    df_fuel = pd.read_csv(source_path)
 
     def clean_str(s):
         if pd.isna(s):
@@ -96,5 +96,5 @@ def generate_geocoded_dataset(
 
 if __name__ == "__main__":
     import os
-    os.makedirs("data", exist_ok=True)
+    os.makedirs("data/processed", exist_ok=True)
     generate_geocoded_dataset()

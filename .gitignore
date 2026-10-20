@@ -12,10 +12,19 @@ ENV/
 *.sqlite3
 *.db
 
+# Django static collection & media uploads
+staticfiles/
+media/
+
 # Pytest / Cache
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Environment variables
+.env
+.env.*
+!.env.example
 
 # OS files
 .DS_Store

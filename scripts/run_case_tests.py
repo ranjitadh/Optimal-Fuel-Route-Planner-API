@@ -229,9 +229,12 @@ for tc in test_cases:
         data = resp.json()
         dist = data["total_distance_miles"]
         gal = data["total_fuel_gallons"]
+        consumed = data.get("total_fuel_consumed_gallons", dist / tc.get("mpg", 10.0))
         cost = data["total_fuel_cost_usd"]
         stops = data["fuel_stops"]
         stops_count = data["fuel_stops_count"]
+        usable_range = data.get("usable_range_miles", tc.get("max_range", 500.0) - 25.0)
+        tank = data.get("tank_capacity_gallons", tc.get("max_range", 500.0) / tc.get("mpg", 10.0))
 
         # Calculate max hop
         max_hop = 0.0
@@ -245,9 +248,15 @@ for tc in test_cases:
         if final_hop > max_hop:
             max_hop = final_hop
 
-        range_respected = max_hop <= (tc.get("max_range", 500.0) + 0.1)
-        gallons_correct = abs(gal - round(dist / tc.get("mpg", 10.0), 2)) < 0.2
-        passed = range_respected and gallons_correct and cost > 0
+        # New contract: no leg exceeds the usable range; purchased fuel is bounded
+        # by (consumed - free starting tank); short trips cost nothing.
+        range_respected = max_hop <= usable_range + 0.5
+        if dist <= usable_range:
+            gallons_ok = abs(gal) < 0.01 and abs(cost) < 0.01 and stops_count == 0
+        else:
+            expected_purchase = consumed - tank
+            gallons_ok = abs(gal - expected_purchase) < 0.6 and cost > 0
+        passed = range_respected and gallons_ok
 
         results.append({
             "test_case": f"{tc['start']} -> {tc['finish']}",
@@ -255,9 +264,9 @@ for tc in test_cases:
             "status_code": resp.status_code,
             "distance": f"{dist:.1f} mi",
             "stops": f"{stops_count} stop(s)",
-            "fuel_gal": f"{gal:.1f} gal",
+            "fuel_gal": f"{gal:.1f} gal (consumed {consumed:.1f})",
             "total_cost": f"${cost:.2f}",
-            "max_leg": f"{max_hop:.1f} mi (<= {tc.get('max_range', 500.0)} mi)",
+            "max_leg": f"{max_hop:.1f} mi (<= {usable_range:.0f} mi)",
             "latency": f"{elapsed}s",
             "verdict": "PASSED" if passed else "FAILED",
         })

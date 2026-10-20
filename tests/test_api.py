@@ -23,7 +23,13 @@ def test_route_optimization_api_get(client):
     assert "total_fuel_cost_usd" in data
     assert "fuel_stops" in data
     assert "map_url" in data
-    assert data["total_fuel_gallons"] == pytest.approx(data["total_distance_miles"] / 10.0, rel=1e-2)
+    # Trip is within the 475-mile usable range, so the starting tank covers it:
+    # no mandatory refueling and no purchase cost.
+    assert data["total_fuel_gallons"] == 0.0
+    assert data["total_fuel_cost_usd"] == 0.0
+    assert data["total_fuel_consumed_gallons"] == pytest.approx(
+        data["total_distance_miles"] / 10.0, rel=1e-2
+    )
 
 @pytest.mark.django_db
 def test_route_optimization_api_post(client):
@@ -37,7 +43,9 @@ def test_route_optimization_api_post(client):
     assert response.status_code == 200
     data = response.json()
     assert data["total_distance_miles"] > 150.0
-    assert data["total_fuel_cost_usd"] > 0.0
+    # ~195 mi round trip is within the starting tank's usable range.
+    assert data["total_fuel_gallons"] == 0.0
+    assert data["total_fuel_cost_usd"] == 0.0
 
 @pytest.mark.django_db
 def test_route_map_endpoint_returns_html(client):

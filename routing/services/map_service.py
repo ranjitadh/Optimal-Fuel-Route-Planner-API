@@ -1,3 +1,5 @@
+import html
+
 import folium
 from folium import plugins
 
@@ -5,11 +7,15 @@ def generate_route_map_html(
     start_info: dict,
     finish_info: dict,
     optimization_result: dict,
+    max_range_miles: float = 500.0,
+    mpg: float = 10.0,
 ) -> str:
     """
     Renders an interactive Leaflet HTML map with route polyline,
     start/finish markers, and optimal fuel stop pins.
     """
+    start_name = html.escape(str(start_info.get("display_name", "Start")))
+    finish_name = html.escape(str(finish_info.get("display_name", "Finish")))
     coords = optimization_result["route_geometry"]["coordinates"]  # [[lon, lat], ...]
     # Folium expects [lat, lon]
     route_latlons = [[c[1], c[0]] for c in coords]
@@ -45,7 +51,7 @@ def generate_route_map_html(
             f"""
             <div style="font-family: sans-serif; min-width: 180px;">
                 <h4 style="margin: 0 0 6px 0; color: #16a34a;">🏁 Start Location</h4>
-                <p style="margin: 0; font-size: 13px;"><b>{start_info.get('display_name', 'Start')}</b></p>
+                <p style="margin: 0; font-size: 13px;"><b>{start_name}</b></p>
                 <p style="margin: 4px 0 0 0; color: #64748b; font-size: 12px;">Mile 0.0</p>
             </div>
             """,
@@ -64,7 +70,7 @@ def generate_route_map_html(
             f"""
             <div style="font-family: sans-serif; min-width: 180px;">
                 <h4 style="margin: 0 0 6px 0; color: #dc2626;">🎯 Destination</h4>
-                <p style="margin: 0; font-size: 13px;"><b>{finish_info.get('display_name', 'Finish')}</b></p>
+                <p style="margin: 0; font-size: 13px;"><b>{finish_name}</b></p>
                 <p style="margin: 4px 0 0 0; color: #64748b; font-size: 12px;">Mile {optimization_result['total_distance_miles']}</p>
             </div>
             """,
@@ -79,14 +85,16 @@ def generate_route_map_html(
     for idx, stop in enumerate(fuel_stops, start=1):
         stop_lat = stop["latitude"]
         stop_lon = stop["longitude"]
+        stop_name = html.escape(str(stop["truckstop_name"]))
+        stop_address = html.escape(f"{stop['address']}, {stop['city']}, {stop['state']}")
         popup_html = f"""
         <div style="font-family: sans-serif; min-width: 220px; padding: 4px;">
             <div style="display: flex; align-items: center; margin-bottom: 8px;">
                 <span style="background: #ea580c; color: white; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; margin-right: 6px;">{idx}</span>
-                <b style="font-size: 14px; color: #0f172a;">{stop['truckstop_name']}</b>
+                <b style="font-size: 14px; color: #0f172a;">{stop_name}</b>
             </div>
             <div style="font-size: 12px; color: #475569; margin-bottom: 6px;">
-                📍 {stop['address']}, {stop['city']}, {stop['state']}
+                📍 {stop_address}
             </div>
             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 6px 0;" />
             <table style="width: 100%; font-size: 12px;">
@@ -100,7 +108,7 @@ def generate_route_map_html(
         folium.Marker(
             location=[stop_lat, stop_lon],
             popup=folium.Popup(popup_html, max_width=320),
-            tooltip=f"Fuel Stop #{idx}: {stop['truckstop_name']} (${stop['retail_price']}/gal)",
+            tooltip=f"Fuel Stop #{idx}: {stop_name} (${stop['retail_price']}/gal)",
             icon=folium.Icon(color="orange", icon="gas-pump", prefix="fa"),
         ).add_to(m)
 
@@ -128,8 +136,10 @@ def generate_route_map_html(
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px;">
             <div><span style="color: #94a3b8;">Total Distance:</span><br/><b style="font-size: 15px;">{optimization_result['total_distance_miles']} mi</b></div>
             <div><span style="color: #94a3b8;">Total Fuel Cost:</span><br/><b style="font-size: 15px; color: #4ade80;">${optimization_result['total_fuel_cost_usd']}</b></div>
-            <div><span style="color: #94a3b8;">Fuel Consumed:</span><br/><b>{optimization_result['total_fuel_gallons']} gal</b> (10 mpg)</div>
-            <div><span style="color: #94a3b8;">Optimal Stops:</span><br/><b>{optimization_result['fuel_stops_count']} stops</b> (max 500 mi range)</div>
+            <div><span style="color: #94a3b8;">Fuel Purchased:</span><br/><b>{optimization_result['total_fuel_gallons']} gal</b></div>
+            <div><span style="color: #94a3b8;">Fuel Consumed:</span><br/><b>{optimization_result['total_fuel_consumed_gallons']} gal</b> ({mpg:g} mpg)</div>
+            <div><span style="color: #94a3b8;">Avg Price:</span><br/><b>{'$%.3f / gal' % optimization_result['avg_price_per_gallon'] if optimization_result.get('avg_price_per_gallon') else '—'}</b></div>
+            <div><span style="color: #94a3b8;">Optimal Stops:</span><br/><b>{optimization_result['fuel_stops_count']} stops</b> (usable {optimization_result.get('usable_range_miles', max_range_miles):g} mi)</div>
         </div>
     </div>
     """

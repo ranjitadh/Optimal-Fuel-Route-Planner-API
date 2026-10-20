@@ -1,387 +1,710 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
     <title>Optimal Fuel Route Planner | USA</title>
-    <!-- Leaflet CSS -->
+    <script>
+        try {
+            document.documentElement.dataset.theme = localStorage.getItem('frp-theme') || 'light';
+        } catch (e) {
+            document.documentElement.dataset.theme = 'light';
+        }
+    </script>
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
     <style>
+        /* ---------- Theme tokens ---------- */
         :root {
             --bg-color: #0b0f19;
             --surface-color: #131b2e;
+            --surface-2: #0b1120;
             --surface-border: #1e293b;
+            --surface-hover: #10182b;
+            --input-border: #29354d;
             --primary: #38bdf8;
             --primary-hover: #0284c7;
             --accent-green: #22c55e;
             --accent-orange: #f97316;
+            --accent-red: #ef4444;
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
+            --icon-btn-hover: #1c2742;
+            --overlay-bg: rgba(11, 15, 25, 0.55);
+            --hud-bg: rgba(15, 23, 42, 0.9);
+            --attr-bg: rgba(11, 15, 25, 0.7);
+            --sidebar-width: 430px;
+            --radius: 10px;
+            --focus-ring: rgba(56, 189, 248, 0.22);
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        :root[data-theme="light"] {
+            --bg-color: #eef2f7;
+            --surface-color: #ffffff;
+            --surface-2: #f8fafc;
+            --surface-border: #e2e8f0;
+            --surface-hover: #eff6ff;
+            --input-border: #cbd5e1;
+            --primary: #0284c7;
+            --primary-hover: #0369a1;
+            --accent-green: #16a34a;
+            --accent-orange: #ea580c;
+            --accent-red: #dc2626;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --icon-btn-hover: #e8eef6;
+            --overlay-bg: rgba(238, 242, 247, 0.6);
+            --hud-bg: rgba(255, 255, 255, 0.92);
+            --attr-bg: rgba(255, 255, 255, 0.75);
+            --focus-ring: rgba(2, 132, 199, 0.18);
         }
 
-        body {
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
             background-color: var(--bg-color);
             color: var(--text-main);
-            height: 100vh;
-            display: flex;
+            height: 100%;
             overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
         }
+        .serif { font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif; }
 
-        /* Sidebar */
+        .app { display: flex; height: 100vh; width: 100vw; }
+
+        /* ---------- Sidebar ---------- */
         .sidebar {
-            width: 440px;
+            width: var(--sidebar-width);
+            flex: 0 0 var(--sidebar-width);
             background: var(--surface-color);
             border-right: 1px solid var(--surface-border);
             display: flex;
             flex-direction: column;
             overflow-y: auto;
+            overflow-x: hidden;
             z-index: 1000;
-            box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+            transition: margin-left 0.3s ease, transform 0.3s ease;
+            scrollbar-width: thin;
+            scrollbar-color: var(--input-border) transparent;
         }
+        .sidebar::-webkit-scrollbar { width: 8px; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--input-border); border-radius: 8px; }
 
-        .header {
-            padding: 24px 24px 16px;
-            border-bottom: 1px solid var(--surface-border);
-        }
+        html.nav-collapsed .sidebar { margin-left: calc(-1 * var(--sidebar-width)); }
 
-        .header h1 {
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--primary);
+        .brand {
             display: flex;
             align-items: center;
-            gap: 10px;
-        }
-
-        .header p {
-            font-size: 13px;
-            color: var(--text-muted);
-            margin-top: 6px;
-        }
-
-        /* Form */
-        .form-container {
-            padding: 20px 24px;
+            gap: 12px;
+            padding: 20px 22px;
             border-bottom: 1px solid var(--surface-border);
         }
+        .brand-mark {
+            width: 38px; height: 38px; border-radius: 11px;
+            background: var(--text-main); color: var(--surface-color);
+            display: grid; place-items: center; flex: none;
+        }
+        .brand-name { display: block; font-size: 15.5px; font-weight: 600; letter-spacing: -0.022em; }
+        .brand-tag { display: block; font-size: 12.5px; color: var(--text-muted); margin-top: 2px; letter-spacing: -0.005em; }
 
-        .input-group {
+        .panel { padding: 20px 22px; border-bottom: 1px solid var(--surface-border); }
+
+        .section-label {
+            display: flex; align-items: center; gap: 12px;
+            font-size: 12px; font-weight: 600; color: var(--text-muted);
+            letter-spacing: -0.005em;
             margin-bottom: 14px;
         }
+        .section-label::after { content: ''; flex: 1; height: 1px; background: var(--surface-border); }
 
-        .input-group label {
-            display: block;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-muted);
-            margin-bottom: 6px;
+        .places { position: relative; }
+        .places::before {
+            content: '';
+            position: absolute; left: 3px; top: 44px; bottom: 21px;
+            border-left: 1px dashed var(--input-border);
         }
+        .place-row { display: flex; gap: 10px; align-items: center; }
+        .place-row + .place-row { margin-top: 12px; }
+        .rail { position: relative; width: 7px; height: 44px; flex: none; display: flex; align-items: center; }
+        .dot { width: 7px; height: 7px; border-radius: 50%; }
+        .dot-start { background: var(--accent-green); }
+        .dot-end { background: var(--accent-red); }
 
-        .input-wrapper {
-            position: relative;
-            display: flex;
-            align-items: center;
-        }
-
-        .input-wrapper i {
-            position: absolute;
-            left: 14px;
-            color: var(--text-muted);
-            font-size: 14px;
-        }
-
-        .input-wrapper input {
+        .field { flex: 1; min-width: 0; }
+        .field > label { display: block; font-size: 12.5px; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
+        .input-wrap { position: relative; display: flex; align-items: center; }
+        .input-wrap input {
             width: 100%;
-            background: #0b1120;
-            border: 1px solid #29354d;
-            border-radius: 8px;
-            color: white;
-            padding: 10px 14px 10px 38px;
+            background: var(--surface-2);
+            border: 1px solid var(--input-border);
+            border-radius: 10px;
+            color: var(--text-main);
+            padding: 11px 13px;
             font-size: 14px;
+            font-family: inherit;
             outline: none;
-            transition: border-color 0.2s;
+            transition: border-color 0.18s, box-shadow 0.18s;
         }
+        .input-wrap input::placeholder { color: var(--text-muted); opacity: 0.75; }
+        .input-wrap input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--focus-ring); }
+        .input-wrap.has-suffix input { padding-right: 40px; font-variant-numeric: tabular-nums; }
+        .suffix { position: absolute; right: 13px; font-size: 12.5px; color: var(--text-muted); pointer-events: none; }
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 
-        .input-wrapper input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
-        }
+        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-
-        .btn-submit {
+        .btn-plan {
             width: 100%;
-            background: linear-gradient(135deg, #0284c7, #2563eb);
-            color: white;
+            margin-top: 16px;
+            background: var(--text-main);
+            color: var(--surface-color);
             border: none;
-            border-radius: 8px;
-            padding: 12px;
-            font-size: 14px;
-            font-weight: 600;
+            border-radius: 10px;
+            padding: 13px 18px;
+            font-size: 14px; font-weight: 600; font-family: inherit;
+            letter-spacing: -0.012em;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: all 0.2s;
-            margin-top: 6px;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            transition: transform 0.16s, box-shadow 0.2s, opacity 0.16s;
         }
-
-        .btn-submit:hover {
-            background: linear-gradient(135deg, #0369a1, #1d4ed8);
-            transform: translateY(-1px);
-        }
-
-        .btn-submit:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        /* Results */
-        .results-section {
-            padding: 20px 24px;
-            flex: 1;
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-
-        .metric-card {
-            background: #0b1120;
-            border: 1px solid #1e293b;
-            border-radius: 8px;
-            padding: 12px;
-        }
-
-        .metric-card .title {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-        }
-
-        .metric-card .value {
-            font-size: 18px;
-            font-weight: 700;
-            color: white;
-            margin-top: 4px;
-        }
-
-        .metric-card.highlight .value {
-            color: var(--accent-green);
-        }
-
-        /* Stops List */
-        .stops-header {
-            font-size: 14px;
-            font-weight: 600;
-            color: white;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .stops-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .stop-card {
-            background: #0b1120;
-            border: 1px solid #1e293b;
-            border-left: 4px solid var(--accent-orange);
-            border-radius: 6px;
-            padding: 12px;
-            font-size: 13px;
-            transition: border-color 0.2s;
-            cursor: pointer;
-        }
-
-        .stop-card:hover {
-            border-color: var(--accent-orange);
-            background: #10182b;
-        }
-
-        .stop-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 4px;
-        }
-
-        .stop-name {
-            font-weight: 600;
-            color: white;
-        }
-
-        .stop-price {
-            font-weight: 700;
-            color: var(--accent-green);
-            background: rgba(34, 197, 94, 0.1);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-
-        .stop-meta {
-            color: var(--text-muted);
-            font-size: 12px;
-            display: flex;
-            gap: 12px;
-            margin-top: 4px;
-        }
-
-        /* Map Container */
-        .map-container {
-            flex: 1;
-            height: 100%;
-            position: relative;
-        }
-
-        #map {
-            width: 100%;
-            height: 100%;
-        }
+        .btn-plan:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 24px -14px rgba(0,0,0,0.6); }
+        .btn-plan:active:not(:disabled) { transform: translateY(0); }
+        .btn-plan:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-plan .arrow { display: inline-block; transition: transform 0.18s; }
+        .btn-plan:hover:not(:disabled) .arrow { transform: translateX(3px); }
 
         .loader {
             display: none;
-            width: 16px;
-            height: 16px;
-            border: 2px solid white;
+            width: 15px; height: 15px;
+            border: 2px solid currentColor;
             border-bottom-color: transparent;
             border-radius: 50%;
-            animation: rotation 1s linear infinite;
+            animation: rotation 0.8s linear infinite;
+        }
+        @keyframes rotation { to { transform: rotate(360deg); } }
+
+        /* ---------- Results ---------- */
+        .results { border-bottom: none; }
+
+        .trip-eyebrow { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; line-height: 1.5; }
+        .trip-eyebrow b { color: var(--text-main); font-weight: 600; }
+
+        .cost-hero {
+            font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+            font-size: 50px; font-weight: 400;
+            letter-spacing: -0.01em; line-height: 1;
+            color: var(--text-main);
+            font-variant-numeric: lining-nums tabular-nums;
+            margin-bottom: 12px;
         }
 
-        @keyframes rotation {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .meta-row {
+            list-style: none;
+            display: flex; flex-wrap: wrap; align-items: center;
+            gap: 9px;
+            font-size: 13.5px; color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--surface-border);
+            margin-bottom: 18px;
+        }
+        .meta-row li { color: var(--text-main); font-weight: 500; }
+        .meta-row li + li::before { content: '·'; margin-right: 9px; color: var(--text-muted); opacity: 0.6; font-weight: 400; }
+
+        .stops-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+        .stops-head .section-label { flex: 1; margin-bottom: 0; }
+        .stops-head .section-label::after { display: none; }
+        .stops-head .rule { flex: 1; height: 1px; background: var(--surface-border); align-self: center; }
+        .stops-count {
+            font-size: 12.5px; color: var(--text-muted);
+            font-variant-numeric: tabular-nums; white-space: nowrap;
+        }
+
+        .stops { display: flex; flex-direction: column; gap: 2px; }
+
+        .stop-card {
+            position: relative;
+            display: flex; gap: 12px;
+            padding: 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.16s;
+        }
+        .stop-card:hover { background: var(--surface-hover); }
+        .stop-card.active { background: var(--surface-hover); }
+        .stop-card::after {
+            content: '';
+            position: absolute; left: 23px; top: 39px; bottom: -6px;
+            width: 1px; background: var(--surface-border);
+        }
+        .stop-card:last-child::after { display: none; }
+
+        .stop-node {
+            position: relative; z-index: 1; flex: none;
+            width: 27px; height: 27px; border-radius: 50%;
+            background: var(--accent-orange); color: #fff;
+            display: grid; place-items: center;
+            font-size: 11.5px; font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            box-shadow: 0 0 0 4px var(--surface-color);
+            transition: transform 0.15s;
+        }
+        .stop-card:hover .stop-node,
+        .stop-card.active .stop-node { transform: scale(1.1); }
+
+        .stop-body { flex: 1; min-width: 0; padding-top: 2px; }
+        .stop-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+        .stop-name {
+            font-size: 14px; font-weight: 600; letter-spacing: -0.012em;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .stop-price { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .stop-place { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; }
+        .stop-facts {
+            display: flex; flex-wrap: wrap; gap: 10px;
+            margin-top: 7px; font-size: 12px; color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+        }
+        .stop-facts span + span::before { content: '·'; margin-right: 10px; opacity: 0.5; }
+
+        .empty-state {
+            font-size: 13px; color: var(--text-muted);
+            line-height: 1.55; padding: 12px 0 2px;
+        }
+        .empty-state b { color: var(--text-main); font-weight: 600; }
+
+        .footnote { margin-top: 18px; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+
+        /* ---------- Map ---------- */
+        .map-wrap { flex: 1; position: relative; min-width: 0; }
+        #map { width: 100%; height: 100%; background: var(--bg-color); }
+
+        .icon-btn {
+            position: absolute; left: 14px; z-index: 1001;
+            width: 42px; height: 42px; border-radius: 10px;
+            background: var(--surface-color);
+            border: 1px solid var(--surface-border);
+            color: var(--text-main); font-size: 16px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+            transition: background 0.2s, transform 0.15s;
+        }
+        .icon-btn:hover { background: var(--icon-btn-hover); transform: translateY(-1px); }
+        #sidebarToggle { top: 14px; }
+        #themeToggle { top: 64px; }
+
+        .map-hud {
+            position: absolute; top: 14px; left: 68px; z-index: 1000;
+            display: flex; align-items: center; gap: 10px;
+            background: var(--hud-bg);
+            border: 1px solid var(--surface-border);
+            border-radius: 10px; padding: 8px 14px;
+            backdrop-filter: blur(8px); max-width: 60%;
+            font-size: 13px; opacity: 0; transform: translateY(-6px);
+            transition: opacity 0.3s, transform 0.3s; pointer-events: none;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.10);
+        }
+        .map-hud.show { opacity: 1; transform: translateY(0); }
+        .map-hud .sep { color: var(--text-muted); }
+        .map-hud .cost { color: var(--accent-green); font-weight: 700; }
+
+        .map-loading {
+            position: absolute; inset: 0; z-index: 1100;
+            display: none; align-items: center; justify-content: center;
+            background: var(--overlay-bg); backdrop-filter: blur(2px);
+        }
+        .map-loading.show { display: flex; }
+        .map-loading .spinner {
+            width: 46px; height: 46px; border-radius: 50%;
+            border: 4px solid rgba(56,189,248,0.25);
+            border-top-color: var(--primary);
+            animation: rotation 0.8s linear infinite;
+        }
+
+        .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1400; opacity: 0; visibility: hidden; transition: opacity 0.3s; }
+        .backdrop.show { opacity: 1; visibility: visible; }
+
+        /* ---------- Toasts ---------- */
+        .toast-container { position: fixed; top: 16px; right: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; max-width: min(360px, 88vw); }
+        .toast {
+            display: flex; align-items: flex-start; gap: 10px;
+            background: var(--surface-color);
+            border: 1px solid var(--surface-border);
+            border-left: 4px solid var(--primary);
+            border-radius: 8px; padding: 12px 14px;
+            box-shadow: 0 12px 30px -12px rgba(0,0,0,0.4);
+            font-size: 13px; line-height: 1.4;
+            animation: toastIn 0.25s ease;
+        }
+        .toast.error { border-left-color: var(--accent-red); }
+        .toast.success { border-left-color: var(--accent-green); }
+        .toast.error i { color: var(--accent-red); }
+        .toast.success i { color: var(--accent-green); }
+        .toast.info i { color: var(--primary); }
+        @keyframes toastIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
+
+        /* ---------- Leaflet tweaks ---------- */
+        .leaflet-popup-content-wrapper { background: var(--surface-color); color: var(--text-main); border-radius: 12px; box-shadow: 0 14px 40px -14px rgba(0,0,0,0.5); border: 1px solid var(--surface-border); }
+        .leaflet-popup-tip { background: var(--surface-color); border: 1px solid var(--surface-border); }
+        .leaflet-popup-content { margin: 0; font-size: 13px; line-height: 1.5; font-family: 'Inter', sans-serif; min-width: 210px; }
+        .leaflet-popup-content a { color: var(--primary); }
+        .leaflet-container a.leaflet-popup-close-button { color: var(--text-muted); z-index: 2; }
+        .leaflet-control-zoom a { background: var(--surface-color) !important; color: var(--text-main) !important; border-color: var(--surface-border) !important; }
+        .leaflet-control-attribution { background: var(--attr-bg) !important; color: var(--text-muted) !important; }
+        .leaflet-control-attribution a { color: var(--primary) !important; }
+        .stop-popup { padding: 14px 16px; }
+        .stop-popup .sp-name { font-size: 14px; font-weight: 600; letter-spacing: -0.012em; line-height: 1.3; display: block; padding-right: 12px; }
+        .stop-popup .sp-place { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+        .stop-popup .sp-price {
+            font-family: 'Instrument Serif', Georgia, serif;
+            font-size: 27px; line-height: 1; margin: 10px 0 2px;
+            font-variant-numeric: lining-nums tabular-nums;
+        }
+        .stop-popup .sp-price small { font-family: 'Inter', sans-serif; font-size: 12px; color: var(--text-muted); margin-left: 4px; font-weight: 400; }
+        .stop-popup .sp-facts {
+            margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--surface-border);
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px;
+            font-size: 12px; font-variant-numeric: tabular-nums;
+        }
+        .stop-popup .sp-facts div { display: flex; justify-content: space-between; gap: 10px; }
+        .stop-popup .sp-facts dt { color: var(--text-muted); }
+        .stop-popup .sp-facts dd { font-weight: 500; }
+
+        .leaflet-tooltip.stop-hover-tip {
+            background: var(--text-main); color: var(--surface-color);
+            border: none; border-radius: 7px;
+            padding: 5px 9px; font-size: 12px; font-weight: 500;
+            font-family: 'Inter', sans-serif;
+            box-shadow: 0 6px 18px -8px rgba(0,0,0,0.5);
+        }
+        .leaflet-tooltip.stop-hover-tip::before { border-top-color: var(--text-main); }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 860px) {
+            html.nav-collapsed .sidebar { margin-left: 0; }
+            .sidebar {
+                position: fixed; top: 0; left: 0; bottom: 0;
+                width: min(var(--sidebar-width), 88vw);
+                transform: translateX(-100%);
+                z-index: 1500;
+            }
+            .sidebar.open { transform: translateX(0); }
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="header">
-            <h1><i class="fa-solid fa-gas-pump"></i> Fuel Route Planner</h1>
-            <p>Optimal refueling along USA routes within 500-mile vehicle range</p>
-        </div>
-
-        <div class="form-container">
-            <form id="routeForm">
-                <div class="input-group">
-                    <label>Start Location</label>
-                    <div class="input-wrapper">
-                        <i class="fa-solid fa-play" style="color: #22c55e;"></i>
-                        <input type="text" id="startInput" value="New York, NY" placeholder="City, State or address" required />
-                    </div>
-                </div>
-
-                <div class="input-group">
-                    <label>Finish Location</label>
-                    <div class="input-wrapper">
-                        <i class="fa-solid fa-flag-checkered" style="color: #ef4444;"></i>
-                        <input type="text" id="finishInput" value="Los Angeles, CA" placeholder="City, State or address" required />
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="input-group">
-                        <label>Max Range (mi)</label>
-                        <div class="input-wrapper">
-                            <i class="fa-solid fa-gauge-high"></i>
-                            <input type="number" id="rangeInput" value="500" min="50" max="1500" required />
-                        </div>
-                    </div>
-                    <div class="input-group">
-                        <label>Fuel Economy</label>
-                        <div class="input-wrapper">
-                            <i class="fa-solid fa-road"></i>
-                            <input type="number" id="mpgInput" value="10" min="1" max="100" step="0.5" required />
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn-submit" id="submitBtn">
-                    <span id="btnText"><i class="fa-solid fa-route"></i> Calculate Optimal Route</span>
-                    <div class="loader" id="btnLoader"></div>
-                </button>
-            </form>
-        </div>
-
-        <div class="results-section" id="resultsSection" style="display: none;">
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <div class="title">Total Distance</div>
-                    <div class="value" id="resDistance">0 mi</div>
-                </div>
-                <div class="metric-card highlight">
-                    <div class="title">Total Fuel Cost</div>
-                    <div class="value" id="resCost">$0.00</div>
-                </div>
-                <div class="metric-card">
-                    <div class="title">Fuel Consumed</div>
-                    <div class="value" id="resGallons">0 gal</div>
-                </div>
-                <div class="metric-card">
-                    <div class="title">Optimal Stops</div>
-                    <div class="value" id="resStopsCount">0</div>
-                </div>
+    <div class="app" id="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+                        <circle cx="5.5" cy="18.5" r="2.2" fill="currentColor" stroke="none"/>
+                        <circle cx="18.5" cy="5.5" r="2.2" fill="currentColor" stroke="none"/>
+                        <path d="M7.6 16.6c3.3-3.1 4.9-5.2 8.6-8.9" stroke-dasharray="2.4 3"/>
+                    </svg>
+                </span>
+                <span class="brand-text">
+                    <span class="brand-name">Fuel Route Planner</span>
+                    <span class="brand-tag">Cheapest refuel stops on any US route</span>
+                </span>
             </div>
 
-            <div class="stops-header">
-                <span>Optimal Refueling Stops</span>
-                <span style="font-size: 11px; color: var(--text-muted);" id="stopsRangeBadge">Max 500 mi / tank</span>
+            <div class="panel">
+                <form id="routeForm">
+                    <div class="places">
+                        <div class="place-row">
+                            <span class="rail"><span class="dot dot-start"></span></span>
+                            <div class="field">
+                                <label for="startInput">From</label>
+                                <div class="input-wrap">
+                                    <input type="text" id="startInput" value="New York, NY" placeholder="City or address" autocomplete="off" required />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="place-row">
+                            <span class="rail"><span class="dot dot-end"></span></span>
+                            <div class="field">
+                                <label for="finishInput">To</label>
+                                <div class="input-wrap">
+                                    <input type="text" id="finishInput" value="Chicago, IL" placeholder="City or address" autocomplete="off" required />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="rangeInput">Tank range</label>
+                            <div class="input-wrap has-suffix">
+                                <input type="number" id="rangeInput" value="500" min="50" max="1500" step="10" required />
+                                <span class="suffix">mi</span>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="mpgInput">Fuel economy</label>
+                            <div class="input-wrap has-suffix">
+                                <input type="number" id="mpgInput" value="10" min="1" max="100" step="0.5" required />
+                                <span class="suffix">mpg</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-plan" id="submitBtn">
+                        <span id="btnText">Plan route <span class="arrow" aria-hidden="true">→</span></span>
+                        <span class="loader" id="btnLoader"></span>
+                    </button>
+                </form>
             </div>
 
-            <div class="stops-list" id="stopsList"></div>
-        </div>
+            <div class="panel results" id="resultsSection" style="display: none;">
+                <p class="trip-eyebrow" id="routeSummary"></p>
+
+                <p class="section-label">Estimated fuel cost</p>
+                <p class="cost-hero" id="resCost">—</p>
+                <ul class="meta-row">
+                    <li id="resDistance">—</li>
+                    <li id="resDuration">—</li>
+                    <li id="resGallons">—</li>
+                    <li id="resAvgPrice">—</li>
+                </ul>
+                <div class="stops-head">
+                    <span class="section-label">Refuel stops</span>
+                    <span class="rule"></span>
+                    <span class="stops-count">
+                        <span id="resStopsCount">—</span> · <span id="stopsRangeBadge">—</span>
+                    </span>
+                </div>
+
+                <div class="stops" id="stopsList"></div>
+
+                <p class="footnote">Stations are the closest OPIS truck stops found within about 10 miles of the route.</p>
+            </div>
+        </aside>
+
+        <!-- Map -->
+        <main class="map-wrap">
+            <div id="map"></div>
+            <button class="icon-btn" id="sidebarToggle" title="Toggle panel" aria-label="Toggle panel">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <button class="icon-btn" id="themeToggle" title="Switch theme" aria-label="Switch theme">
+                <i class="fa-solid fa-moon" id="themeIcon"></i>
+            </button>
+            <div class="map-hud" id="mapHud">
+                <span id="hudRoute">—</span>
+                <span class="sep">•</span>
+                <span id="hudDistance">—</span>
+                <span class="sep">•</span>
+                <span class="cost" id="hudCost">—</span>
+            </div>
+            <div class="map-loading" id="mapLoading"><div class="spinner"></div></div>
+        </main>
     </div>
 
-    <!-- Map Container -->
-    <div class="map-container">
-        <div id="map"></div>
-    </div>
+    <div class="backdrop" id="backdrop"></div>
+    <div class="toast-container" id="toasts"></div>
 
-    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        const map = L.map('map').setView([39.8283, -98.5795], 5);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
+        /* -------------------- Theme -------------------- */
+        const getTheme = () => document.documentElement.dataset.theme || 'light';
+        const setTheme = (t) => {
+            document.documentElement.dataset.theme = t;
+            try { localStorage.setItem('frp-theme', t); } catch (e) {}
+            document.getElementById('themeIcon').className = 'fa-solid ' + (t === 'light' ? 'fa-moon' : 'fa-sun');
+            applyTiles();
+        };
 
+        /* -------------------- Map setup -------------------- */
+        const map = L.map('map', {
+            zoomControl: false,
+            preferCanvas: true,
+            worldCopyJump: true,
+        }).setView([39.8283, -98.5795], 4);
+
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // Optional CARTO key from Django context; falls back to the free basemap.
+        const cartoApiKey = "{{ carto_api_key|default:'' }}";
+        const OSM_FALLBACK = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        const THEME_TILES = {
+            light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        };
+
+        let tileLayer = null;
+        let tileErrors = 0;
+        let usingFallback = false;
+
+        function applyTiles() {
+            if (tileLayer) { map.removeLayer(tileLayer); tileLayer = null; }
+            tileErrors = 0;
+
+            const theme = getTheme();
+            const url = usingFallback ? OSM_FALLBACK : (cartoApiKey ? THEME_TILES[theme] + '?key=' + cartoApiKey : THEME_TILES[theme]);
+            const isCarto = !usingFallback;
+
+            tileLayer = L.tileLayer(url, {
+                attribution: isCarto
+                    ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    : '&copy; OpenStreetMap contributors',
+                subdomains: isCarto ? 'abcd' : 'abc',
+                maxZoom: 19,
+                detectRetina: true,
+            }).addTo(map);
+
+            tileLayer.on('tileerror', () => {
+                if (!usingFallback && ++tileErrors === 6) {
+                    usingFallback = true;
+                    applyTiles();
+                }
+            });
+        }
+        applyTiles();
+
+        /* -------------------- State -------------------- */
+        const canvasRenderer = L.canvas({ padding: 0.5 });
         let routeLayer = null;
-        let markersLayer = L.layerGroup().addTo(map);
+        const markersLayer = L.layerGroup().addTo(map);
+        let stopMarkers = [];
+        let stopCards = [];
+        let activeIndex = -1;
+        let requestSeq = 0;
 
+        /* -------------------- Helpers -------------------- */
+        function escapeHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function fmtHours(hours) {
+            if (hours == null || isNaN(hours)) return '—';
+            const total = Math.round(hours * 60);
+            const h = Math.floor(total / 60);
+            const m = total % 60;
+            return h > 0 ? `${h}h ${m}m` : `${m}m`;
+        }
+
+        function fmtMoney(n) {
+            return '$' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function toast(message, type = 'info') {
+            const icons = { info: 'fa-circle-info', success: 'fa-circle-check', error: 'fa-triangle-exclamation' };
+            const el = document.createElement('div');
+            el.className = 'toast ' + type;
+            el.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i><div>${escapeHtml(message)}</div>`;
+            const container = document.getElementById('toasts');
+            container.appendChild(el);
+            setTimeout(() => {
+                el.style.transition = 'opacity .3s, transform .3s';
+                el.style.opacity = '0';
+                el.style.transform = 'translateX(24px)';
+                setTimeout(() => el.remove(), 300);
+            }, type === 'error' ? 6000 : 3500);
+        }
+
+        // Decimate very long polylines for fast rendering while keeping shape.
+        function decimate(coords, maxPoints) {
+            if (!Array.isArray(coords) || coords.length <= maxPoints) return coords;
+            const step = Math.ceil(coords.length / maxPoints);
+            const out = [];
+            for (let i = 0; i < coords.length; i += step) out.push(coords[i]);
+            if (out[out.length - 1] !== coords[coords.length - 1]) out.push(coords[coords.length - 1]);
+            return out;
+        }
+
+        /* -------------------- Icons -------------------- */
+        function pinIcon(bg, glyph, active) {
+            const size = active ? 30 : 24;
+            return L.divIcon({
+                className: '',
+                html: `<div style="background:${bg};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-size:${active ? 13 : 12}px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:all .15s;">${glyph}</div>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2],
+            });
+        }
+
+        // Rich, readable data card shown on marker hover/click.
+        function stopPopupHtml(stop, i) {
+            const price = Number(stop.retail_price).toFixed(3);
+            const legRounded = Number(stop.leg_distance_miles).toFixed(1);
+            return '' +
+                `<div class="stop-popup">` +
+                    `<span class="sp-name">${i + 1}. ${escapeHtml(stop.truckstop_name)}</span>` +
+                    `<div class="sp-place">${escapeHtml(stop.address)} · ${escapeHtml(stop.city)}, ${escapeHtml(stop.state)}</div>` +
+                    `<div class="sp-price">$${price}<small>/gal</small></div>` +
+                    `<dl class="sp-facts">` +
+                        `<div><dt>Filled</dt><dd>${stop.gallons_filled} gal</dd></div>` +
+                        `<div><dt>Cost</dt><dd>${fmtMoney(stop.cost_usd)}</dd></div>` +
+                        `<div><dt>Route mile</dt><dd>${stop.route_mile} mi</dd></div>` +
+                        `<div><dt>Leg</dt><dd>${legRounded} mi</dd></div>` +
+                    `</dl>` +
+                `</div>`;
+        }
+
+        /* -------------------- Sidebar + theme toggles -------------------- */
+        const sidebar = document.getElementById('sidebar');
+        const backdrop = document.getElementById('backdrop');
+        const isMobile = () => window.innerWidth <= 860;
+
+        function toggleSidebar() {
+            if (isMobile()) {
+                sidebar.classList.toggle('open');
+                backdrop.classList.toggle('show', sidebar.classList.contains('open'));
+            } else {
+                document.documentElement.classList.toggle('nav-collapsed');
+            }
+            setTimeout(() => map.invalidateSize(), 320);
+        }
+        document.getElementById('sidebarToggle').addEventListener('click', toggleSidebar);
+        document.getElementById('themeToggle').addEventListener('click', () => {
+            setTheme(getTheme() === 'light' ? 'dark' : 'light');
+        });
+        backdrop.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            backdrop.classList.remove('show');
+            setTimeout(() => map.invalidateSize(), 320);
+        });
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => map.invalidateSize(), 200);
+        });
+
+        // Initialise toggle icon to match active theme.
+        document.getElementById('themeIcon').className = 'fa-solid ' + (getTheme() === 'light' ? 'fa-moon' : 'fa-sun');
+
+        /* -------------------- Route request -------------------- */
         async function planRoute(start, finish, maxRange, mpg) {
             const btn = document.getElementById('submitBtn');
             const loader = document.getElementById('btnLoader');
             const btnText = document.getElementById('btnText');
-            
+            const overlay = document.getElementById('mapLoading');
+
+            if (!start || !finish) {
+                toast('Please provide both a start and a finish location.', 'error');
+                return;
+            }
+
+            const seq = ++requestSeq;
             btn.disabled = true;
             loader.style.display = 'inline-block';
             btnText.style.display = 'none';
+            overlay.classList.add('show');
 
             try {
                 const response = await fetch('/api/route/', {
@@ -391,126 +714,200 @@
                         start: start,
                         finish: finish,
                         max_range: parseFloat(maxRange),
-                        mpg: parseFloat(mpg)
-                    })
+                        mpg: parseFloat(mpg),
+                    }),
                 });
 
-                const data = await response.json();
+                let data = null;
+                try { data = await response.json(); } catch (_) { /* non-JSON body */ }
+
+                if (seq !== requestSeq) return;
+
                 if (!response.ok) {
-                    alert(data.detail || data.error || 'Failed to calculate route.');
+                    const msg = (data && (data.detail || data.error)) || `Request failed (${response.status}).`;
+                    toast(msg, 'error');
                     return;
                 }
 
                 renderResults(data);
+                if (isMobile()) {
+                    sidebar.classList.remove('open');
+                    backdrop.classList.remove('show');
+                    setTimeout(() => map.invalidateSize(), 320);
+                }
             } catch (err) {
-                alert('Network error connecting to API: ' + err.message);
+                if (seq === requestSeq) toast('Network error connecting to the API: ' + err.message, 'error');
             } finally {
-                btn.disabled = false;
-                loader.style.display = 'none';
-                btnText.style.display = 'inline';
+                if (seq === requestSeq) {
+                    btn.disabled = false;
+                    loader.style.display = 'none';
+                    btnText.style.display = 'inline';
+                    overlay.classList.remove('show');
+                }
             }
         }
 
-        function renderResults(data) {
-            document.getElementById('resultsSection').style.display = 'block';
-            document.getElementById('resDistance').innerText = data.total_distance_miles.toLocaleString() + ' mi';
-            document.getElementById('resCost').innerText = '$' + data.total_fuel_cost_usd.toFixed(2);
-            document.getElementById('resGallons').innerText = data.total_fuel_gallons.toFixed(1) + ' gal';
-            document.getElementById('resStopsCount').innerText = data.fuel_stops_count + ' stop(s)';
-
-            // Clear old layers
-            if (routeLayer) map.removeLayer(routeLayer);
+        /* -------------------- Rendering -------------------- */
+        function clearRoute() {
+            if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
             markersLayer.clearLayers();
+            stopMarkers = [];
+            stopCards = [];
+            activeIndex = -1;
+        }
 
-            // Render route polyline
-            const latlngs = data.route_geometry.coordinates.map(c => [c[1], c[0]]);
-            routeLayer = L.polyline(latlngs, {
-                color: '#2563eb',
-                weight: 5,
-                opacity: 0.85
-            }).addTo(map);
+        function renderResults(data) {
+            const geometry = (data.route_geometry && data.route_geometry.coordinates) || [];
+            const stops = data.fuel_stops || [];
 
-            map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+            clearRoute();
 
-            // Start & Finish Markers
-            const startIcon = L.divIcon({
-                html: '<div style="background: #22c55e; color: white; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-play"></i></div>',
-                className: '',
-                iconSize: [26, 26],
-                iconAnchor: [13, 13]
-            });
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('routeSummary').innerHTML =
+                `<b>${escapeHtml(data.start_location.query)}</b> to <b>${escapeHtml(data.finish_location.query)}</b> — ` +
+                `${data.fuel_stops_count === 0 ? 'no stops needed.' : 'your cheapest refuel stops, in order.'}`;
 
-            const finishIcon = L.divIcon({
-                html: '<div style="background: #ef4444; color: white; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.4);"><i class="fa-solid fa-flag-checkered"></i></div>',
-                className: '',
-                iconSize: [26, 26],
-                iconAnchor: [13, 13]
-            });
+            document.getElementById('resDistance').innerText = Number(data.total_distance_miles).toLocaleString() + ' mi';
+            document.getElementById('resDuration').innerText = fmtHours(data.duration_hours) + ' driving';
+            document.getElementById('resCost').innerText = fmtMoney(data.total_fuel_cost_usd);
+            document.getElementById('resGallons').innerText = Number(data.total_fuel_gallons).toFixed(1) + ' gal';
+            document.getElementById('resStopsCount').innerText = data.fuel_stops_count + (data.fuel_stops_count === 1 ? ' stop' : ' stops');
+            document.getElementById('resAvgPrice').innerText =
+                (data.avg_price_per_gallon != null)
+                    ? fmtMoney(data.avg_price_per_gallon) + '/gal avg'
+                    : '—';
 
-            L.marker([data.start_location.latitude, data.start_location.longitude], { icon: startIcon })
-                .bindPopup(`<b>Start Location</b><br>${data.start_location.display_name}`)
-                .addTo(markersLayer);
+            const usableRange = data.usable_range_miles != null
+                ? Math.round(data.usable_range_miles)
+                : document.getElementById('rangeInput').value;
+            document.getElementById('stopsRangeBadge').innerText = `${usableRange} mi usable range`;
 
-            L.marker([data.finish_location.latitude, data.finish_location.longitude], { icon: finishIcon })
-                .bindPopup(`<b>Destination</b><br>${data.finish_location.display_name}`)
-                .addTo(markersLayer);
+            document.getElementById('hudRoute').innerText = `${data.start_location.query} → ${data.finish_location.query}`;
+            document.getElementById('hudDistance').innerText = Number(data.total_distance_miles).toLocaleString() + ' mi';
+            document.getElementById('hudCost').innerText = fmtMoney(data.total_fuel_cost_usd);
+            document.getElementById('mapHud').classList.add('show');
 
-            // Fuel Stops
-            const stopsContainer = document.getElementById('stopsList');
-            stopsContainer.innerHTML = '';
+            if (geometry.length > 1) {
+                const simplified = decimate(geometry, 6000);
+                const latlngs = simplified.map((c) => [c[1], c[0]]);
+                routeLayer = L.polyline(latlngs, {
+                    color: getTheme() === 'light' ? '#0284c7' : '#3b82f6',
+                    weight: 5,
+                    opacity: 0.85,
+                    lineJoin: 'round',
+                    renderer: canvasRenderer,
+                }).addTo(map);
+                routeLayer.bindTooltip(`${Number(data.total_distance_miles).toLocaleString()} mi · ${fmtHours(data.duration_hours)}`, { sticky: true });
+            }
 
-            data.fuel_stops.forEach((stop, i) => {
-                const stopIcon = L.divIcon({
-                    html: `<div style="background: #ea580c; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">${i + 1}</div>`,
-                    className: '',
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
+            markersLayer.addLayer(
+                L.marker([data.start_location.latitude, data.start_location.longitude], { icon: pinIcon('#16a34a', '▶') })
+                    .bindPopup(`<b>Start</b><br>${escapeHtml(data.start_location.display_name)}`)
+            );
+            markersLayer.addLayer(
+                L.marker([data.finish_location.latitude, data.finish_location.longitude], { icon: pinIcon('#dc2626', '⚑') })
+                    .bindPopup(`<b>Destination</b><br>${escapeHtml(data.finish_location.display_name)}`)
+            );
+
+            if (routeLayer) {
+                map.fitBounds(routeLayer.getBounds(), { padding: [60, 60] });
+            }
+
+            renderStops(stops, data);
+        }
+
+        function renderStops(stops, data) {
+            const container = document.getElementById('stopsList');
+            container.innerHTML = '';
+
+            if (!stops.length) {
+                const usable = (data && data.usable_range_miles != null)
+                    ? Math.round(data.usable_range_miles)
+                    : document.getElementById('rangeInput').value;
+                const empty = document.createElement('div');
+                empty.className = 'empty-state';
+                empty.innerHTML = `<b>No refueling needed.</b> The trip is within the vehicle's usable range of ${escapeHtml(String(usable))} mi, so it runs entirely on the full starting tank.`;
+                container.appendChild(empty);
+                return;
+            }
+
+            stops.forEach((stop, i) => {
+                const marker = L.marker([stop.latitude, stop.longitude], {
+                    icon: pinIcon('#ea580c', String(i + 1), false),
+                    riseOnHover: true,
+                })
+                    .bindPopup(stopPopupHtml(stop, i), { closeButton: true, offset: [0, -6], className: 'stop-popup-wrap' })
+                    .bindTooltip(`<b>${escapeHtml(stop.truckstop_name)}</b> · $${Number(stop.retail_price).toFixed(3)}/gal`, {
+                        direction: 'top', offset: [0, -14], opacity: 1, className: 'stop-hover-tip',
+                    });
+
+                marker.on('mouseover', () => {
+                    if (activeIndex === i) return;
+                    marker.setIcon(pinIcon('#ea580c', String(i + 1), true));
+                    if (!marker.isPopupOpen()) marker.openPopup();
                 });
+                marker.on('mouseout', () => {
+                    if (activeIndex !== i) marker.setIcon(pinIcon('#ea580c', String(i + 1), false));
+                    if (activeIndex !== i) marker.closePopup();
+                });
+                marker.on('click', () => setActive(i, false));
+                markersLayer.addLayer(marker);
+                stopMarkers.push(marker);
 
-                const m = L.marker([stop.latitude, stop.longitude], { icon: stopIcon })
-                    .bindPopup(`
-                        <b>${stop.truckstop_name}</b><br>
-                        ${stop.address}, ${stop.city}, ${stop.state}<br>
-                        <hr style="margin: 4px 0;">
-                        <b>Price:</b> $${stop.retail_price.toFixed(3)}/gal<br>
-                        <b>Route Mile:</b> ${stop.route_mile} mi<br>
-                        <b>Filled:</b> ${stop.gallons_filled} gal ($${stop.cost_usd.toFixed(2)})
-                    `)
-                    .addTo(markersLayer);
-
-                // Stop card in sidebar
                 const card = document.createElement('div');
                 card.className = 'stop-card';
-                card.innerHTML = `
-                    <div class="stop-top">
-                        <span class="stop-name">#${i + 1} ${stop.truckstop_name}</span>
-                        <span class="stop-price">$${stop.retail_price.toFixed(3)}/gal</span>
-                    </div>
-                    <div style="font-size: 12px; color: #94a3b8;">${stop.city}, ${stop.state} (Mile ${stop.route_mile})</div>
-                    <div class="stop-meta">
-                        <span><i class="fa-solid fa-gas-pump"></i> ${stop.gallons_filled} gal</span>
-                        <span><i class="fa-solid fa-receipt"></i> $${stop.cost_usd.toFixed(2)}</span>
-                    </div>
-                `;
-                card.onclick = () => {
-                    map.setView([stop.latitude, stop.longitude], 12);
-                    m.openPopup();
-                };
-                stopsContainer.appendChild(card);
+                card.innerHTML =
+                    `<span class="stop-node">${i + 1}</span>` +
+                    `<div class="stop-body">` +
+                        `<div class="stop-row">` +
+                            `<span class="stop-name">${escapeHtml(stop.truckstop_name)}</span>` +
+                            `<span class="stop-price">$${Number(stop.retail_price).toFixed(3)}</span>` +
+                        `</div>` +
+                        `<div class="stop-place">${escapeHtml(stop.city)}, ${escapeHtml(stop.state)} · mile ${stop.route_mile}</div>` +
+                        `<div class="stop-facts">` +
+                            `<span>${stop.gallons_filled} gal filled</span>` +
+                            `<span>${stop.leg_distance_miles} mi leg</span>` +
+                            `<span>${fmtMoney(stop.cost_usd)}</span>` +
+                        `</div>` +
+                    `</div>`;
+                card.addEventListener('click', () => setActive(i, true));
+                card.addEventListener('mouseenter', () => {
+                    if (activeIndex === i) return;
+                    stopMarkers[i].setIcon(pinIcon('#ea580c', String(i + 1), true));
+                    stopMarkers[i].openPopup();
+                });
+                card.addEventListener('mouseleave', () => {
+                    if (activeIndex !== i) stopMarkers[i].setIcon(pinIcon('#ea580c', String(i + 1), false));
+                    if (activeIndex !== i) stopMarkers[i].closePopup();
+                });
+                container.appendChild(card);
+                stopCards.push(card);
             });
         }
 
+        function setActive(index, scroll) {
+            stopCards.forEach((c, i) => c.classList.toggle('active', i === index));
+            stopMarkers.forEach((m, i) => m.setIcon(pinIcon('#ea580c', String(i + 1), i === index)));
+            activeIndex = index;
+
+            const stop = stopMarkers[index];
+            if (!stop) return;
+            map.flyTo(stop.getLatLng(), Math.max(map.getZoom(), 9), { duration: 0.6 });
+            stop.openPopup();
+            if (scroll) stopCards[index].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        /* -------------------- Events -------------------- */
         document.getElementById('routeForm').addEventListener('submit', (e) => {
             e.preventDefault();
             planRoute(
-                document.getElementById('startInput').value,
-                document.getElementById('finishInput').value,
+                document.getElementById('startInput').value.trim(),
+                document.getElementById('finishInput').value.trim(),
                 document.getElementById('rangeInput').value,
                 document.getElementById('mpgInput').value
             );
         });
 
-        // Initial sample route calculation on page load
         planRoute('New York, NY', 'Chicago, IL', 500, 10);
     </script>
 </body>

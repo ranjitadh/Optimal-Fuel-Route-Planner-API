@@ -1,14 +1,234 @@
 import math
-from decimal import Decimal
 from django.db import models
 from shapely.geometry import LineString, Point
+
 from routing.models import FuelStop
 from routing.services.osrm import get_route
 
 DEFAULT_MAX_RANGE_MILES = 500.0
 DEFAULT_MPG = 10.0
 DEFAULT_CORRIDOR_MILES = 10.0
-DEFAULT_SAFETY_MARGIN_MILES = 25.0  # Plan refuels before reaching 475 miles on a 500-mile tank
+DEFAULT_SAFETY_MARGIN_MILES = 25.0  # Reserve kept in the tank; usable range = max range - this.
+DEFAULT_CLUSTER_MILES = 2.0         # Stations closer than this are treated as one interchange.
+FUEL_STEP_GALLONS = 0.05            # Fuel discretization for the exact refueling DP.
+
+# Project contract (see README "Problem Specifications & Vehicle Rules"):
+#   tank_capacity_gallons = max_range_miles / mpg
+# The vehicle is assumed to START WITH A FULL TANK. That initial fuel is already
+# owned, so it is never billed as an en-route purchase.
+FUEL_STOP_NOTE = "En-route refueling stop"
+
+
+def _validate_positive_finite(value, name):
+    if value is None:
+        raise ValueError(f"{name} is required.")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"{name} must be a number.")
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number.")
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0.")
+
+
+def plan_refueling(total_distance_miles, mpg, max_range_miles, candidates,
+                   safety_margin_miles=DEFAULT_SAFETY_MARGIN_MILES):
+    """
+    Minimum-cost refueling planner with partial fills and a tank capacity limit.
+
+    Model
+    -----
+    * Starts with a FULL tank of ``tank_capacity_gallons = max_range_miles / mpg``.
+    * ``usable_range_miles = max_range_miles - safety_margin_miles`` is the furthest
+      the vehicle may drive between refuels (the reserve is never planned to be used).
+    * At a stop the vehicle may buy ANY amount up to the free space in the tank.
+    * Cost of a stop = purchased gallons x that station's price.
+
+    Policy (exact dynamic program):
+    nodes are the start (mile 0, full free tank), every candidate station, and the
+    finish. Fuel is discretized at ``FUEL_STEP_GALLONS``; the DP state is
+    (node, fuel-level) and stores the minimum purchase cost to reach it. At a station
+    any amount up to the free tank space may be bought (partial fills allowed); a leg
+    is allowed only if its distance is within ``usable_range_miles`` and the fuel in
+    the tank covers it. The start node's fuel is free, so it is neither bought nor
+    billed. This is exact up to the fuel discretization and is cross-checked against a
+    brute-force reference in the test-suite.
+
+    Returns a dict with ``fuel_stops`` plus unrounded ``total_purchased_gallons``
+    and ``total_purchase_cost``. Raises ValueError when no feasible plan exists.
+    """
+    _validate_positive_finite(mpg, "mpg")
+    _validate_positive_finite(max_range_miles, "max_range_miles")
+    if safety_margin_miles < 0:
+        raise ValueError("safety_margin_miles cannot be negative.")
+
+    tank_capacity = max_range_miles / mpg
+    usable_range = max_range_miles - safety_margin_miles
+    if usable_range <= 0:
+        raise ValueError(
+            "usable range is not positive after applying the safety margin "
+            f"({safety_margin_miles} mi on a {max_range_miles} mi tank)."
+        )
+
+    consumed_gallons = total_distance_miles / mpg
+
+    # Stations strictly between start and finish, sorted by position along the route.
+    usable = [c for c in candidates if 0.0 < c["route_mile"] < total_distance_miles]
+    usable.sort(key=lambda c: c["route_mile"])
+
+    # Trip reachable on the starting tank: zero mandatory stops, zero purchases.
+    if total_distance_miles <= usable_range:
+        return {
+            "fuel_stops": [],
+            "total_purchased_gallons": 0.0,
+            "total_purchase_cost": 0.0,
+            "tank_capacity_gallons": tank_capacity,
+            "usable_range_miles": usable_range,
+            "starting_fuel_gallons": tank_capacity,
+            "consumed_gallons": consumed_gallons,
+        }
+
+    eps = 1e-9
+
+    # ---- Exact DP over discretized fuel levels -----------------------------
+    # Positions/indices: 0 = start, 1..n = stations, n+1 = finish.
+    positions = [0.0] + [c["route_mile"] for c in usable] + [total_distance_miles]
+    n_stations = len(usable)
+    finish_index = n_stations + 1
+
+    # Validate feasibility up front: no gap between consecutive refuel points may
+    # exceed the usable range.
+    for a, b in zip(positions, positions[1:]):
+        if b - a > usable_range + 1e-6:
+            raise ValueError(
+                f"No feasible refueling plan: a {b - a:.1f} mi gap between refueling "
+                f"opportunities exceeds the usable range of {usable_range:.1f} mi."
+            )
+
+    step = FUEL_STEP_GALLONS
+    n_levels = int(math.floor(tank_capacity / step + 1e-9)) + 1  # 0..tank_capacity
+
+    def level_gallons(level):
+        return level * step
+
+    def gallons_to_level(gallons):
+        return max(0, min(n_levels - 1, int(round(gallons / step))))
+
+    def arrived_level(gallons):
+        # Snap leftover fuel DOWN so a state never holds more fuel than physically
+        # remains after a leg (rounding up would create phantom fuel over many legs).
+        return max(0, min(n_levels - 1, int(math.floor(gallons / step + 1e-9))))
+
+    INF = float("inf")
+    # Dijkstra (label-setting) over states (node_index, fuel_level). Two edge kinds:
+    #   * buy one fuel increment at a station: (i, l) -> (i, l+1)  cost = step*price
+    #   * drive from i to j (within usable range): (i, l) -> (j, l')  cost = 0
+    # The start holds a full free tank. This is exact up to the fuel discretization.
+    dist = [[INF] * n_levels for _ in range(len(positions))]
+    prev = [[None] * n_levels for _ in range(len(positions))]
+
+    start_level = gallons_to_level(tank_capacity)
+    dist[0][start_level] = 0.0
+
+    import heapq
+    heap = [(0.0, 0, start_level)]
+
+    while heap:
+        cost, i, lvl = heapq.heappop(heap)
+        if cost > dist[i][lvl] + 1e-12:
+            continue
+
+        # Buy one increment at a station.
+        node_price = usable[i - 1]["retail_price"] if 1 <= i <= n_stations else None
+        if node_price is not None and lvl + 1 < n_levels:
+            nc = cost + step * node_price
+            if nc < dist[i][lvl + 1] - 1e-12:
+                dist[i][lvl + 1] = nc
+                prev[i][lvl + 1] = (i, lvl, True)
+                heapq.heappush(heap, (nc, i, lvl + 1))
+
+        # Drive to every later node within usable range.
+        fuel = level_gallons(lvl)
+        for j in range(i + 1, len(positions)):
+            leg = positions[j] - positions[i]
+            if leg > usable_range + 1e-6:
+                break
+            leg_gal = leg / mpg
+            if fuel + 1e-6 < leg_gal:
+                continue
+            jl = arrived_level(fuel - leg_gal)
+            if cost < dist[j][jl] - 1e-12:
+                dist[j][jl] = cost
+                prev[j][jl] = (i, lvl, False)
+                heapq.heappush(heap, (cost, j, jl))
+
+    finish_index = len(positions) - 1
+    best_level = min(range(n_levels), key=lambda lvl: dist[finish_index][lvl])
+    if dist[finish_index][best_level] == INF:
+        raise ValueError(
+            "No feasible refueling plan: the destination cannot be reached with the "
+            f"usable range of {usable_range:.1f} mi."
+        )
+
+    # Reconstruct: walk back to the start, keeping only buying steps at stations.
+    raw = []  # (station_index, gallons) in reverse order
+    i, lvl = finish_index, best_level
+    steps = 0
+    while prev[i][lvl] is not None:
+        pi, plvl, was_buy = prev[i][lvl]
+        if was_buy and 1 <= pi <= n_stations:
+            raw.append((pi, step))
+        i, lvl = pi, plvl
+        steps += 1
+        if steps > len(positions) * n_levels + 1:
+            raise ValueError("No feasible refueling plan: optimizer failed to converge.")
+
+    raw.reverse()
+    purchases = {}
+    order = []
+    prev_purchase_position = 0.0
+    for pi, buy_gal in raw:
+        station = usable[pi - 1]
+        _record_purchase(purchases, order, station, buy_gal, prev_purchase_position)
+        prev_purchase_position = station["route_mile"]
+
+    fuel_stops = [purchases[id(s)] for s in order]
+    total_purchased = sum(s["gallons_filled"] for s in fuel_stops)
+    total_cost = sum(s["cost_usd"] for s in fuel_stops)
+
+    return {
+        "fuel_stops": fuel_stops,
+        "total_purchased_gallons": total_purchased,
+        "total_purchase_cost": total_cost,
+        "tank_capacity_gallons": tank_capacity,
+        "usable_range_miles": usable_range,
+        "starting_fuel_gallons": tank_capacity,
+        "consumed_gallons": consumed_gallons,
+    }
+
+
+def _record_purchase(purchases, order, station, gallons, prev_position):
+    """Accumulate a purchase at ``station`` (unrounded gallons and cost)."""
+    key = id(station)
+    if key not in purchases:
+        purchases[key] = {
+            "opis_id": station.get("opis_id"),
+            "truckstop_name": station["truckstop_name"],
+            "address": station["address"],
+            "city": station["city"],
+            "state": station["state"],
+            "retail_price": station["retail_price"],
+            "latitude": station["latitude"],
+            "longitude": station["longitude"],
+            "route_mile": station["route_mile"],
+            "leg_distance_miles": round(station["route_mile"] - prev_position, 1),
+            "gallons_filled": 0.0,
+            "cost_usd": 0.0,
+            "note": FUEL_STOP_NOTE,
+        }
+        order.append(station)
+    purchases[key]["gallons_filled"] += gallons
+    purchases[key]["cost_usd"] += gallons * station["retail_price"]
+
 
 def optimize_fuel_route(
     start_coords: tuple[float, float],
@@ -18,14 +238,21 @@ def optimize_fuel_route(
     corridor_miles: float = DEFAULT_CORRIDOR_MILES,
 ) -> dict:
     """
-    Computes driving route and cost-optimal fuel stops along the route.
-    Guarantees that the vehicle never exceeds the maximum tank range (500 miles).
+    Computes a driving route and the cost-optimal refueling stops along it.
+
+    Assumes the vehicle starts with a full tank; only fuel purchased at stations
+    is billed. Guarantees no leg between refuels exceeds the usable range
+    (max range minus the safety margin), and that no single purchase exceeds the
+    tank capacity.
     """
+    _validate_positive_finite(max_range_miles, "max_range_miles")
+    _validate_positive_finite(mpg, "mpg")
+
     route_data = get_route(start_coords, finish_coords)
     total_distance = route_data["distance_miles"]
     coords = route_data["coordinates"]  # [[lon, lat], ...]
 
-    # Planar projection to convert degrees into exact Euclidean miles
+    # Planar projection to convert degrees into exact Euclidean miles.
     lons = [c[0] for c in coords]
     lats = [c[1] for c in coords]
     mean_lat = sum(lats) / len(lats)
@@ -36,10 +263,8 @@ def optimize_fuel_route(
     def to_miles_xy(lon, lat):
         return ((lon - min_lon) * 69.0 * cos_factor, (lat - min_lat) * 69.0)
 
-    xy_route = [to_miles_xy(c[0], c[1]) for c in coords]
-    line = LineString(xy_route)
+    line = LineString([to_miles_xy(c[0], c[1]) for c in coords])
 
-    # Query bounding box of fuel stops with buffer
     bbox_stops = list(
         FuelStop.objects.filter(
             latitude__range=(min(lats) - 0.3, max(lats) + 0.3),
@@ -49,6 +274,9 @@ def optimize_fuel_route(
 
     candidates = []
     for s in bbox_stops:
+        price = float(s.retail_price) if s.retail_price is not None else None
+        if price is None or price <= 0:
+            continue  # missing/invalid price -> unusable station
         p = Point(to_miles_xy(s.longitude, s.latitude))
         dist_to_route = line.distance(p)
         if dist_to_route <= corridor_miles:
@@ -61,7 +289,7 @@ def optimize_fuel_route(
                     "city": s.city,
                     "state": s.state,
                     "rack_id": s.rack_id,
-                    "retail_price": float(s.retail_price),
+                    "retail_price": price,
                     "latitude": s.latitude,
                     "longitude": s.longitude,
                     "route_mile": round(route_mile, 1),
@@ -70,128 +298,73 @@ def optimize_fuel_route(
 
     candidates.sort(key=lambda x: x["route_mile"])
 
-    # Cluster stations that are within 2 miles of each other, keeping the lowest price
+    # Cluster stations within DEFAULT_CLUSTER_MILES, keeping the lowest price.
     clustered = []
     for c in candidates:
-        if not clustered or (c["route_mile"] - clustered[-1]["route_mile"]) >= 2.0:
+        if not clustered or (c["route_mile"] - clustered[-1]["route_mile"]) >= DEFAULT_CLUSTER_MILES:
             clustered.append(c)
         elif c["retail_price"] < clustered[-1]["retail_price"]:
             clustered[-1] = c
 
-    total_gallons_consumed = round(total_distance / mpg, 2)
+    plan = plan_refueling(
+        total_distance_miles=total_distance,
+        mpg=mpg,
+        max_range_miles=max_range_miles,
+        candidates=clustered,
+        safety_margin_miles=DEFAULT_SAFETY_MARGIN_MILES,
+    )
 
-    # Case 1: Trip is <= max_range_miles (500 miles)
-    if total_distance <= max_range_miles:
-        # Trip can physically be done on 1 full tank
-        fuel_stops = []
-        if clustered:
-            best_stop = min(clustered, key=lambda x: x["retail_price"])
-            cost = round(total_gallons_consumed * best_stop["retail_price"], 2)
-            fuel_stops.append({
-                **best_stop,
-                "leg_distance_miles": round(best_stop["route_mile"], 1),
-                "gallons_filled": total_gallons_consumed,
-                "cost_usd": cost,
-                "note": "Optional optimal refueling stop along route (trip within 500-mile vehicle range)",
-            })
-            total_fuel_cost = cost
-        else:
-            # If no station is within 10 miles, use nearest station or database average
-            closest_station = None
-            if bbox_stops:
-                closest_station = min(
-                    bbox_stops,
-                    key=lambda s: line.distance(Point(to_miles_xy(s.longitude, s.latitude)))
-                )
-            if closest_station:
-                price = float(closest_station.retail_price)
-            else:
-                avg_price_dict = FuelStop.objects.aggregate(models.Avg("retail_price"))
-                price = float(avg_price_dict["retail_price__avg"]) if avg_price_dict.get("retail_price__avg") else 3.450
+    stops = plan["fuel_stops"]
+    total_purchased = plan["total_purchased_gallons"]
+    total_cost = plan["total_purchase_cost"]
+    consumed = plan["consumed_gallons"]
 
-            total_fuel_cost = round(total_gallons_consumed * price, 2)
-
-        return {
-            "total_distance_miles": total_distance,
-            "duration_hours": route_data["duration_hours"],
-            "total_fuel_gallons": total_gallons_consumed,
-            "total_fuel_cost_usd": total_fuel_cost,
-            "fuel_stops_count": len(fuel_stops),
-            "fuel_stops": fuel_stops,
-            "route_geometry": route_data["geojson"],
+    # Optional (unbilled) suggestion for trips covered by the starting tank.
+    suggested_stop = None
+    if not stops and clustered:
+        suggestion = min(clustered, key=lambda c: c["retail_price"])
+        suggested_stop = {
+            "truckstop_name": suggestion["truckstop_name"],
+            "city": suggestion["city"],
+            "state": suggestion["state"],
+            "retail_price": suggestion["retail_price"],
+            "route_mile": suggestion["route_mile"],
         }
 
-    # Case 2: Trip > max_range_miles (requires one or multiple fuel stops)
-    curr_mile = 0.0
-    fuel_stops = []
-    total_fuel_cost = 0.0
-    effective_range = max_range_miles - DEFAULT_SAFETY_MARGIN_MILES  # 475 miles
-
-    while curr_mile + max_range_miles < total_distance:
-        max_reach = curr_mile + effective_range
-        # Preferred window: between 250 miles and max_reach for well-spaced stops
-        pref_min = curr_mile + 250.0
-        window = [c for c in clustered if pref_min <= c["route_mile"] <= max_reach]
-        
-        # If no station in preferred window, expand window down to curr_mile + 30
-        if not window:
-            window = [c for c in clustered if curr_mile + 30.0 <= c["route_mile"] <= max_reach]
-
-        # If still no station, look for any station ahead within max_reach
-        if not window:
-            window = [c for c in clustered if curr_mile < c["route_mile"] <= curr_mile + max_range_miles]
-
-        # Emergency fallback: pick nearest station ahead
-        if not window:
-            ahead = [c for c in clustered if c["route_mile"] > curr_mile]
-            if not ahead:
-                break
-            best = ahead[0]
-        else:
-            # Pick the most cost-effective station in the window
-            best = min(window, key=lambda x: x["retail_price"])
-
-        leg_distance = round(best["route_mile"] - curr_mile, 1)
-        leg_gallons = round(leg_distance / mpg, 2)
-        step_cost = round(leg_gallons * best["retail_price"], 2)
-        total_fuel_cost += step_cost
-
-        fuel_stops.append({
-            "opis_id": best["opis_id"],
-            "truckstop_name": best["truckstop_name"],
-            "address": best["address"],
-            "city": best["city"],
-            "state": best["state"],
-            "retail_price": best["retail_price"],
-            "latitude": best["latitude"],
-            "longitude": best["longitude"],
-            "route_mile": best["route_mile"],
-            "leg_distance_miles": leg_distance,
-            "gallons_filled": leg_gallons,
-            "cost_usd": step_cost,
-        })
-
-        curr_mile = best["route_mile"]
-
-    # Final leg to destination
-    final_leg_distance = round(total_distance - curr_mile, 1)
-    final_leg_gallons = round(final_leg_distance / mpg, 2)
-    # The fuel for the final leg was purchased at the last stop
-    last_stop_price = fuel_stops[-1]["retail_price"] if fuel_stops else 3.50
-    final_step_cost = round(final_leg_gallons * last_stop_price, 2)
-    total_fuel_cost += final_step_cost
-
-    # Update the last stop's gallons and cost to include completing the trip
-    if fuel_stops:
-        fuel_stops[-1]["gallons_filled"] = round(fuel_stops[-1]["gallons_filled"] + final_leg_gallons, 2)
-        fuel_stops[-1]["cost_usd"] = round(fuel_stops[-1]["cost_usd"] + final_step_cost, 2)
+    displayed_stops = [_display_stop(s) for s in stops]
+    avg_price = (total_cost / total_purchased) if total_purchased > 0 else None
 
     return {
         "total_distance_miles": total_distance,
         "duration_hours": route_data["duration_hours"],
-        "total_fuel_gallons": total_gallons_consumed,
-        "total_fuel_cost_usd": round(total_fuel_cost, 2),
-        "fuel_stops_count": len(fuel_stops),
-        "fuel_stops": fuel_stops,
+        "total_fuel_gallons": round(total_purchased, 2),
+        "total_fuel_consumed_gallons": round(consumed, 2),
+        "total_fuel_cost_usd": round(total_cost, 2),
+        "avg_price_per_gallon": round(avg_price, 4) if avg_price is not None else None,
+        "tank_capacity_gallons": round(plan["tank_capacity_gallons"], 2),
+        "usable_range_miles": round(plan["usable_range_miles"], 1),
+        "starting_fuel_gallons": round(plan["starting_fuel_gallons"], 2),
+        "fuel_stops_count": len(stops),
+        "fuel_stops": displayed_stops,
+        "suggested_stop": suggested_stop,
         "route_geometry": route_data["geojson"],
+    }
+
+
+def _display_stop(stop: dict) -> dict:
+    """Rounded, API-safe view of a single refueling stop."""
+    return {
+        "opis_id": stop.get("opis_id"),
+        "truckstop_name": stop["truckstop_name"],
+        "address": stop["address"],
+        "city": stop["city"],
+        "state": stop["state"],
+        "retail_price": round(stop["retail_price"], 3),
+        "latitude": stop["latitude"],
+        "longitude": stop["longitude"],
+        "route_mile": stop["route_mile"],
+        "leg_distance_miles": stop["leg_distance_miles"],
+        "gallons_filled": round(stop["gallons_filled"], 2),
+        "cost_usd": round(stop["cost_usd"], 2),
+        "note": stop.get("note"),
     }

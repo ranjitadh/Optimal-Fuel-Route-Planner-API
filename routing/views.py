@@ -103,9 +103,15 @@ class RouteOptimizationView(APIView):
             "total_distance_miles": optimization["total_distance_miles"],
             "duration_hours": optimization["duration_hours"],
             "total_fuel_gallons": optimization["total_fuel_gallons"],
+            "total_fuel_consumed_gallons": optimization["total_fuel_consumed_gallons"],
             "total_fuel_cost_usd": optimization["total_fuel_cost_usd"],
+            "avg_price_per_gallon": optimization["avg_price_per_gallon"],
+            "tank_capacity_gallons": optimization["tank_capacity_gallons"],
+            "usable_range_miles": optimization["usable_range_miles"],
+            "starting_fuel_gallons": optimization["starting_fuel_gallons"],
             "fuel_stops_count": optimization["fuel_stops_count"],
             "fuel_stops": optimization["fuel_stops"],
+            "suggested_stop": optimization.get("suggested_stop"),
             "route_geometry": optimization["route_geometry"],
             "map_url": request.build_absolute_uri(map_url),
         }
@@ -140,7 +146,13 @@ class RouteMapView(APIView):
                 max_range_miles=max_range,
                 mpg=mpg,
             )
-            html = generate_route_map_html(start_info, finish_info, optimization)
+            html = generate_route_map_html(
+                start_info,
+                finish_info,
+                optimization,
+                max_range_miles=max_range,
+                mpg=mpg,
+            )
             return HttpResponse(html, content_type="text/html")
         except Exception as e:
             return HttpResponse(
