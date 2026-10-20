@@ -24,7 +24,27 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-*jtslb%$!s@8^&
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-ALLOWED_HOSTS = ['*']
+# Hosts allowed to serve the app. Comma-separated env var for production
+# (e.g. "myapp.onrender.com,www.example.com"). Defaults to '*' only while
+# DEBUG is on so local development keeps working out of the box.
+_allowed_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
+if _allowed_hosts:
+    ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(',') if h.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = []
+
+# Render terminates TLS at its proxy and forwards the original scheme in this
+# header; telling Django to trust it keeps request.is_secure() and CSRF correct.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Origins allowed to submit unsafe (POST/PUT) requests, needed for CSRF checks
+# behind a proxy. Comma-separated full origins, e.g.
+# "https://myapp.onrender.com". Only required when serving over HTTPS with
+# session/CSRF-protected forms; the JSON API is token-free.
+_csrf_trusted = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_trusted.split(',') if o.strip()]
 
 # Application definition
 INSTALLED_APPS = [
@@ -46,6 +66,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise serves collected static files directly from the WSGI app,
+    # so no separate static host is needed in production.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -123,6 +146,23 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_DIRS = [BASE_DIR / 'static']
+
+# WhiteNoise: compress and fingerprint static assets, and serve them straight
+# from the WSGI app. Use the simpler backend when DEBUG so files are never
+# hashed during local development.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': (
+            'django.contrib.staticfiles.storage.StaticFilesStorage'
+            if DEBUG else
+            'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        ),
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

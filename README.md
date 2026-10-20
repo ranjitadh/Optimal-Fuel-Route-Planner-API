@@ -22,8 +22,9 @@ Includes a **REST API**, a **standalone map endpoint**, and an **interactive Lea
 6. [API Documentation & cURL Examples](#-api-documentation--curl-examples)
 7. [Installation & Quickstart](#-installation--quickstart)
 8. [Database Configuration (MySQL & SQLite)](#-database-configuration-mysql--sqlite)
-9. [Automated Testing](#-automated-testing)
-10. [Repository Structure](#-repository-structure)
+9. [Deploy for Free on Render](#-deploy-for-free-on-render)
+10. [Automated Testing](#-automated-testing)
+11. [Repository Structure](#-repository-structure)
 
 ---
 
@@ -355,6 +356,49 @@ python manage.py load_fuel_prices
 ```
 
 When `DB_ENGINE` is unset or set to `sqlite`, the application defaults safely to `db.sqlite3`.
+
+---
+
+## 🚀 Deploy for Free on Render
+
+This repository ships with a [Render Blueprint](https://render.com/docs/blueprint-spec)
+(`render.yaml`) plus `build.sh` / `start.sh`, so it deploys as a free Python web
+service with no extra configuration.
+
+### How it works
+- **`build.sh`** installs dependencies and runs `collectstatic` so **WhiteNoise**
+  can serve static assets straight from the WSGI app (no separate static host).
+- **`start.sh`** runs migrations, reloads the committed fuel-stop CSV, then
+  launches **Gunicorn** on Render's `$PORT`.
+- Free instances use an **ephemeral filesystem**, so the SQLite database is
+  rebuilt from the committed CSV on every boot — that is why the CSV is the
+  source of truth and `start.sh` reloads it each time.
+
+### Deploy steps
+1. Push this repo to GitHub (already done).
+2. In Render: **New → Blueprint**, pick this repo. Render reads `render.yaml`.
+3. When prompted (or in **Dashboard → Environment**), set the `sync: false`
+   secrets:
+   - `DJANGO_CSRF_TRUSTED_ORIGINS` → e.g. `https://<your-app>.onrender.com`
+   - `CARTO_API_KEY` / `API_KEY` → optional; blank falls back to the free OSM basemap
+   (`DJANGO_SECRET_KEY` is generated automatically by Render.)
+4. Click **Apply**. First deploy takes a few minutes; the app is live at
+   `https://<your-app>.onrender.com`.
+
+### Production environment variables
+| Variable | Purpose |
+| --- | --- |
+| `DJANGO_SECRET_KEY` | Cryptographic signing key (**auto-generated** by Render) |
+| `DJANGO_DEBUG` | Must be `False` in production |
+| `DJANGO_ALLOWED_HOSTS` | Comma-separated allowed hosts (e.g. `.onrender.com`) |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | Full origin(s) for CSRF over HTTPS |
+| `DB_ENGINE` | `sqlite` (default) or `mysql` |
+| `CARTO_API_KEY` / `API_KEY` | Optional CARTO basemap key |
+
+> **Note:** Render's free tier is intended for demos/hobby projects — it spins
+> down after ~15 minutes of inactivity (≈1 min cold start) and the disk is
+> ephemeral. For durable storage, upgrade to a paid instance with a persistent
+> disk or attach a Postgres database.
 
 ---
 

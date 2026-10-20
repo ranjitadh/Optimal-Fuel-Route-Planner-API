@@ -1,0 +1,37 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+#
+# Deploys the Optimal Fuel Route Planner as a free Python web service.
+# After connecting this repo in Render, set the `sync: false` secrets in the
+# Render dashboard (they are intentionally NOT stored in git).
+services:
+  - type: web
+    name: optimal-fuel-route-planner
+    runtime: python
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "./start.sh"
+    healthCheckPath: /api/health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.14"
+      - key: DJANGO_DEBUG
+        value: "False"
+      # Generated once by Render and injected as a secret; never committed.
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      # Comma-separated hosts Render should accept. Update if you add a custom
+      # domain, e.g. "myapp.onrender.com,custom.example.com".
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com"
+      # Required for CSRF/session checks over HTTPS. Set to the full origin,
+      # e.g. "https://optimal-fuel-route-planner.onrender.com".
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        sync: false
+      # SQLite on the ephemeral free disk; the CSV is reloaded on every boot.
+      - key: DB_ENGINE
+        value: sqlite
+      # Optional: CARTO basemap tiles (leave blank to use the free OSM basemap).
+      - key: CARTO_API_KEY
+        sync: false
+      - key: API_KEY
+        sync: false

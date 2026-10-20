@@ -5,6 +5,8 @@ charset-normalizer==3.5.2
 django==6.1.2
 django-cors-headers==4.9.0
 djangorestframework==3.18.3
+gunicorn==23.0.0
+whitenoise==6.8.2
 et-xmlfile==2.0.0
 folium==0.20.0
 idna==3.20
