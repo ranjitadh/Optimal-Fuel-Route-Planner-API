@@ -1,5 +1,9 @@
 # 🚚 Optimal Fuel Route Planner API (USA)
 
+### 🔗 Live Demo: **[optimal-fuel-route-planner-api.onrender.com](https://optimal-fuel-route-planner-api.onrender.com/)**
+
+> ⏳ Hosted on Render's free tier — the first request after ~15 min of inactivity may take up to a minute to spin back up.
+
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Django](https://img.shields.io/badge/Django-6.1-092E20?logo=django&logoColor=white)](https://djangoproject.com)
 [![DRF](https://img.shields.io/badge/Django_REST_Framework-3.18-red)](https://www.django-rest-framework.org/)
