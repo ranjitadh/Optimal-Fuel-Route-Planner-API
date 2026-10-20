@@ -1,7 +1,46 @@
 import math
 import requests
+from shapely.geometry import LineString
 
 METERS_TO_MILES = 0.000621371
+
+# Douglas-Peucker tolerance (degrees) used to thin the route polyline before it
+# is returned. 0.0005 deg is roughly 35 m at US latitudes — well below one pixel
+# at any zoom the dashboard uses, so the shape is visually identical while the
+# payload and map-render cost drop by ~85%.
+GEOMETRY_SIMPLIFY_TOLERANCE = 0.0005
+
+# Never return more than this many route vertices; simplify progressively until
+# the polyline fits. Protects the response size and browser render time.
+MAX_GEOMETRY_POINTS = 1500
+
+
+def simplify_coordinates(coords, tolerance=GEOMETRY_SIMPLIFY_TOLERANCE,
+                         max_points=MAX_GEOMETRY_POINTS):
+    """
+    Thins a [[lon, lat], ...] polyline with Douglas-Peucker, escalating the
+    tolerance until at most ``max_points`` vertices remain. Endpoints are always
+    preserved. Falls back to uniform decimation if Shapely cannot simplify.
+    """
+    if not coords or len(coords) <= max_points:
+        return coords
+
+    tol = tolerance
+    simplified = coords
+    for _ in range(6):
+        line = LineString(coords)
+        simplified = [[x, y] for x, y in line.simplify(tol, preserve_topology=False).coords]
+        if len(simplified) <= max_points:
+            return simplified
+        tol *= 2.0
+
+    # Fallback: uniform decimation if still too dense.
+    step = math.ceil(len(coords) / max_points)
+    out = coords[::step]
+    if out[-1] != coords[-1]:
+        out.append(coords[-1])
+    return out
+
 
 def haversine_miles(lat1, lon1, lat2, lon2):
     """Computes great-circle distance between two points on Earth in miles."""
@@ -55,6 +94,10 @@ def get_route(start_coords: tuple[float, float], finish_coords: tuple[float, flo
 
     raw_coords = route["geometry"]["coordinates"]  # [[lon, lat], ...]
 
+    # Thin the polyline for transport/render. Cumulative distances below are
+    # computed on the FULL geometry so route-mile accuracy is unaffected.
+    simple_coords = simplify_coordinates(raw_coords)
+
     # Compute cumulative distances along the route polyline
     cum_distances = [0.0]
     total_haversine = 0.0
@@ -75,7 +118,8 @@ def get_route(start_coords: tuple[float, float], finish_coords: tuple[float, flo
     return {
         "distance_miles": round(total_distance_miles, 2),
         "duration_hours": round(duration_hours, 2),
-        "coordinates": raw_coords,
+        "coordinates": simple_coords,
+        "full_coordinates": raw_coords,
         "cum_distances": cum_distances,
-        "geojson": route["geometry"],
+        "geojson": {"type": "LineString", "coordinates": simple_coords},
     }

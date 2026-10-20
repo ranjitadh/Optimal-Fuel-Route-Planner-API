@@ -1,4 +1,10 @@
+import copy
+import hashlib
+import json
+import threading
+import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.views import APIView
@@ -15,6 +21,38 @@ from routing.serializers import (
 from routing.services.geocoding import geocode_location
 from routing.services.optimizer import optimize_fuel_route
 from routing.services.map_service import generate_route_map_html
+
+# Simple in-process TTL cache for completed route responses. The dataset is
+# static and routes are deterministic, so caching repeated demo queries makes
+# them near-instant. Bounded to avoid unbounded memory growth.
+_ROUTE_CACHE = {}
+_ROUTE_CACHE_LOCK = threading.Lock()
+_ROUTE_CACHE_TTL = 60 * 30      # 30 minutes
+_ROUTE_CACHE_MAX = 256
+
+
+def _cache_get(key):
+    now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        entry = _ROUTE_CACHE.get(key)
+        if not entry:
+            return None
+        value, expires = entry
+        if expires < now:
+            _ROUTE_CACHE.pop(key, None)
+            return None
+        return copy.deepcopy(value)
+
+
+def _cache_set(key, value):
+    now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        if len(_ROUTE_CACHE) >= _ROUTE_CACHE_MAX:
+            # Drop the entry closest to expiry to keep the cache bounded.
+            oldest = min(_ROUTE_CACHE, key=lambda k: _ROUTE_CACHE[k][1])
+            _ROUTE_CACHE.pop(oldest, None)
+        _ROUTE_CACHE[key] = (copy.deepcopy(value), now + _ROUTE_CACHE_TTL)
+
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 50
@@ -44,22 +82,37 @@ class RouteOptimizationView(APIView):
         max_range = serializer.validated_data.get("max_range", 500.0)
         mpg = serializer.validated_data.get("mpg", 10.0)
 
-        # 1. Geocode locations
-        try:
-            start_info = geocode_location(start_query)
-        except ValueError as e:
-            return Response(
-                {"error": "Invalid start location", "detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Serve a cached response for identical requests (fast repeat queries).
+        cache_key = hashlib.sha256(
+            json.dumps(
+                [start_query.lower(), finish_query.lower(), max_range, mpg],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            cached["map_url"] = request.build_absolute_uri(cached["_map_path"])
+            cached.pop("_map_path", None)
+            return Response(cached, status=status.HTTP_200_OK)
 
-        try:
-            finish_info = geocode_location(finish_query)
-        except ValueError as e:
-            return Response(
-                {"error": "Invalid finish location", "detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # 1. Geocode both endpoints concurrently (overlaps the two network calls).
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            start_future = pool.submit(geocode_location, start_query)
+            finish_future = pool.submit(geocode_location, finish_query)
+            try:
+                start_info = start_future.result()
+            except ValueError as e:
+                return Response(
+                    {"error": "Invalid start location", "detail": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                finish_info = finish_future.result()
+            except ValueError as e:
+                return Response(
+                    {"error": "Invalid finish location", "detail": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         start_coords = (start_info["latitude"], start_info["longitude"])
         finish_coords = (finish_info["latitude"], finish_info["longitude"])
@@ -113,9 +166,15 @@ class RouteOptimizationView(APIView):
             "fuel_stops": optimization["fuel_stops"],
             "suggested_stop": optimization.get("suggested_stop"),
             "route_geometry": optimization["route_geometry"],
-            "map_url": request.build_absolute_uri(map_url),
         }
 
+        # Cache the body with the (host-independent) map path; the absolute URL is
+        # rebuilt per request so the cache stays correct behind any host.
+        to_cache = dict(response_data)
+        to_cache["_map_path"] = map_url
+        _cache_set(cache_key, to_cache)
+
+        response_data["map_url"] = request.build_absolute_uri(map_url)
         return Response(response_data, status=status.HTTP_200_OK)
 
 class RouteMapView(APIView):
@@ -138,8 +197,12 @@ class RouteMapView(APIView):
             )
 
         try:
-            start_info = geocode_location(start_query)
-            finish_info = geocode_location(finish_query)
+            # Geocode both endpoints concurrently to overlap the network calls.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                start_future = pool.submit(geocode_location, start_query)
+                finish_future = pool.submit(geocode_location, finish_query)
+                start_info = start_future.result()
+                finish_info = finish_future.result()
             optimization = optimize_fuel_route(
                 start_coords=(start_info["latitude"], start_info["longitude"]),
                 finish_coords=(finish_info["latitude"], finish_info["longitude"]),

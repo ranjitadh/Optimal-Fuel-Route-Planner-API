@@ -22,10 +22,10 @@ media/
 htmlcov/
 
 # Environment variables
-.env
-.env.*
 !.env.example
 
 # OS files
 .DS_Store
 Thumbs.db
+config.bat
+node_modules

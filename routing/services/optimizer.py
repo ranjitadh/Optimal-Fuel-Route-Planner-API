@@ -106,17 +106,8 @@ def plan_refueling(total_distance_miles, mpg, max_range_miles, candidates,
 
     step = FUEL_STEP_GALLONS
     n_levels = int(math.floor(tank_capacity / step + 1e-9)) + 1  # 0..tank_capacity
-
-    def level_gallons(level):
-        return level * step
-
-    def gallons_to_level(gallons):
-        return max(0, min(n_levels - 1, int(round(gallons / step))))
-
-    def arrived_level(gallons):
-        # Snap leftover fuel DOWN so a state never holds more fuel than physically
-        # remains after a leg (rounding up would create phantom fuel over many legs).
-        return max(0, min(n_levels - 1, int(math.floor(gallons / step + 1e-9))))
+    max_level = n_levels - 1
+    inv_step = 1.0 / step
 
     INF = float("inf")
     # Dijkstra (label-setting) over states (node_index, fuel_level). Two edge kinds:
@@ -126,7 +117,23 @@ def plan_refueling(total_distance_miles, mpg, max_range_miles, candidates,
     dist = [[INF] * n_levels for _ in range(len(positions))]
     prev = [[None] * n_levels for _ in range(len(positions))]
 
-    start_level = gallons_to_level(tank_capacity)
+    n_nodes = len(positions)
+    # For every ordered node pair (i, j) within the usable range, precompute the
+    # fuel the leg consumes in whole discretized levels. Consumption is rounded
+    # UP (ceil) so a leg can never be driven on less fuel than it physically
+    # needs; arrival is then lvl - needed, which floors the leftover and keeps
+    # the plan feasible (no phantom fuel, never arrives with a negative tank).
+    leg_levels = [None] * n_nodes  # leg_levels[i] = list of (j, fuel_levels_consumed)
+    for i in range(n_nodes):
+        bucket = []
+        for j in range(i + 1, n_nodes):
+            leg = positions[j] - positions[i]
+            if leg > usable_range + 1e-6:
+                break
+            bucket.append((j, int(math.ceil(leg / mpg * inv_step - 1e-9))))
+        leg_levels[i] = bucket
+
+    start_level = max(0, min(max_level, int(round(tank_capacity * inv_step))))
     dist[0][start_level] = 0.0
 
     import heapq
@@ -138,28 +145,23 @@ def plan_refueling(total_distance_miles, mpg, max_range_miles, candidates,
             continue
 
         # Buy one increment at a station.
-        node_price = usable[i - 1]["retail_price"] if 1 <= i <= n_stations else None
-        if node_price is not None and lvl + 1 < n_levels:
-            nc = cost + step * node_price
+        if 1 <= i <= n_stations and lvl < max_level:
+            nc = cost + step * usable[i - 1]["retail_price"]
             if nc < dist[i][lvl + 1] - 1e-12:
                 dist[i][lvl + 1] = nc
                 prev[i][lvl + 1] = (i, lvl, True)
                 heapq.heappush(heap, (nc, i, lvl + 1))
 
         # Drive to every later node within usable range.
-        fuel = level_gallons(lvl)
-        for j in range(i + 1, len(positions)):
-            leg = positions[j] - positions[i]
-            if leg > usable_range + 1e-6:
-                break
-            leg_gal = leg / mpg
-            if fuel + 1e-6 < leg_gal:
+        for j, needed in leg_levels[i]:
+            if lvl < needed:
                 continue
-            jl = arrived_level(fuel - leg_gal)
+            jl = lvl - needed
             if cost < dist[j][jl] - 1e-12:
                 dist[j][jl] = cost
                 prev[j][jl] = (i, lvl, False)
                 heapq.heappush(heap, (cost, j, jl))
+
 
     finish_index = len(positions) - 1
     best_level = min(range(n_levels), key=lambda lvl: dist[finish_index][lvl])
